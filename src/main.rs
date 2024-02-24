@@ -1,9 +1,12 @@
 mod error;
 mod handler;
+mod token;
 
 use error::AppError;
-use confy;
 use handler::{ApiResponse, Responses, Token};
+use token::token as generate_token;
+
+use confy;
 use serde_derive::{Deserialize, Serialize};
 use axum::{extract, response::{self, Response}, routing, Router};
 use tokio;
@@ -27,25 +30,18 @@ impl Default for AppConfig {
     }
 }
 
+#[derive(Parser)]
+pub struct Env {
+    #[arg(env, hide_env_values = true)]
+    pub secret: String,
+}
+
 #[derive(Deserialize)]
 struct UserForm {
     id: String,
     pass: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Claims {
-    iat: i64,
-    exp: i64,
-    uuid: String,
-
-}
-
-#[derive(Parser)]
-pub struct Env {
-    #[arg(env, hide_env_values = true)]
-    pub secret: String,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), AppError>{
@@ -62,30 +58,11 @@ async fn main() -> Result<(), AppError>{
 async fn login(extract::Json(user): extract::Json<UserForm>) -> response::Json<ApiResponse> {
     let mut response = ApiResponse::default();
     let env = Env::parse();
-    let Ok(token) = generate_token(user, &env.secret).await else {
-        response::Json(ApiResponse::new(Responses::Error, "801 Token Generate Failed"));
-    };
-    let res = Token {token: token};
-    response::Json(ApiResponse::new(Responses::Token(res), "200 OK"))
-
-}
-
-async fn generate_token(user: UserForm, secret: &str) -> Result<String, AppError> {
-    let dt = Utc::now();
-    let mut header = jsonwebtoken::Header::default();
-    header.typ = Some(String::from("JWT"));
-    header.alg = jsonwebtoken::Algorithm::HS256;
-    let claim = Claims {
-        iat: dt.timestamp(),
-        exp: (dt + Duration::hours(24)).timestamp(),
-        uuid: user.id.to_string(),
-    };
-    match encode(&header, &claim, &EncodingKey::from_secret(secret.as_ref())) {
-        Ok(token) => {
-            return Ok(token)
-        },
-        Err(e) => {
-            return Err(AppError::JsonWebtoken(e))
-        }
+    if let Ok(token) = generate_token(user, &env.secret).await {
+        response::Json(ApiResponse::new(Responses::Error, "801 Token Generate Failed"))
+    } else {
+    let response_token = Token {token: token};
+    response::Json(ApiResponse::new(Responses::Token(response_token), "200 OK"))
     }
 }
+
